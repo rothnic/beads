@@ -478,7 +478,7 @@ var proxyCapabilityRegistry = []capabilityRow{
 // proxy.store.unrouted.
 var proxyPermittedPaths = []string{
 	// issue CRUD and queries
-	"assign", "batch", "blocked", "children", "close", "comment", "count", "create",
+	"assign", "batch", "batch apply", "blocked", "children", "close", "comment", "count", "create",
 	"defer", "delete", "duplicates", "edit", "export", "find-duplicates", "forget",
 	"gc", "graph", "graph check", "heartbeat", "import", "info", "lint", "link",
 	"list", "note", "orphans", "priority", "promote", "prune", "purge", "q", "query",

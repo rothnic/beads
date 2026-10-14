@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -153,6 +154,43 @@ func (s *Server) applyBatchRequest(w http.ResponseWriter, r *http.Request) (issu
 	if !ok {
 		return issueops.ApplyBatchRequest{}, false
 	}
+	request, res := applyBatchMembers(members, actor)
+	if res != nil {
+		return refuse(res)
+	}
+	return request, true
+}
+
+// DecodeApplyBatchRequest uses the batchApply HTTP schema for native CLI input.
+// It validates the complete bounded request before an applier is called.
+func DecodeApplyBatchRequest(reader io.Reader) (issueops.ApplyBatchRequest, error) {
+	raw, err := io.ReadAll(io.LimitReader(reader, maxApplyBatchBodyBytes+1))
+	if err != nil {
+		return issueops.ApplyBatchRequest{}, err
+	}
+	if len(raw) > maxApplyBatchBodyBytes {
+		return issueops.ApplyBatchRequest{}, fmt.Errorf("batch request exceeds %d bytes: %w", maxApplyBatchBodyBytes, issueops.ErrValidation)
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil || members == nil {
+		return issueops.ApplyBatchRequest{}, fmt.Errorf("batch request must be a single JSON object: %w", issueops.ErrValidation)
+	}
+	if offender, unknown := unknownMember(members, applyBatchRequestMembers); unknown {
+		return issueops.ApplyBatchRequest{}, fmt.Errorf("unknown batch request member %q: %w", offender, issueops.ErrValidation)
+	}
+	actor, res := bodyActorFromMembers(members)
+	if res != nil {
+		return issueops.ApplyBatchRequest{}, fmt.Errorf("%s: %w", derefString(res.Problem.Detail), issueops.ErrValidation)
+	}
+	request, res := applyBatchMembers(members, actor)
+	if res != nil {
+		return issueops.ApplyBatchRequest{}, fmt.Errorf("%s: %w", derefString(res.Problem.Detail), issueops.ErrValidation)
+	}
+	return request, nil
+}
+
+func applyBatchMembers(members map[string]json.RawMessage, actor string) (issueops.ApplyBatchRequest, *Result) {
+	refuse := func(res *Result) (issueops.ApplyBatchRequest, *Result) { return issueops.ApplyBatchRequest{}, res }
 	provenance, res := applyTextMember(members, "", "provenance")
 	if res != nil {
 		return refuse(res)
@@ -175,7 +213,7 @@ func (s *Server) applyBatchRequest(w http.ResponseWriter, r *http.Request) (issu
 		Provenance:            provenance,
 		ForceIDPrefix:         forceIDPrefix,
 		SkipPerEdgeCycleCheck: skipPerEdge,
-	}, true
+	}, nil
 }
 
 // applyItems validates `items` and projects it onto the role's items, in
@@ -860,6 +898,12 @@ func applyBatchResponse(result issueops.ApplyBatchResult) apigen.ApplyBatchRespo
 		items = append(items, wire)
 	}
 	return apigen.ApplyBatchResponse{Keys: keys, Items: items}
+}
+
+// ApplyBatchResponse preserves exact revision strings in the shared lean result.
+// Native CLI callers retain their notifying applier; projection does not run hooks.
+func ApplyBatchResponse(result issueops.ApplyBatchResult) apigen.ApplyBatchResponse {
+	return applyBatchResponse(result)
 }
 
 // failApplyBatch answers a refused plan, mapping the role's TYPED refusals onto

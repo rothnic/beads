@@ -42,8 +42,9 @@ var versionCmd = &cobra.Command{
 
 		if jsonOutput {
 			result := map[string]interface{}{
-				"version": Version,
-				"build":   Build,
+				"version":      Version,
+				"build":        Build,
+				"capabilities": []string{nativeBatchApplyCapability},
 			}
 			if commit != "" {
 				result["commit"] = commit
