@@ -498,15 +498,62 @@ func TestProxy_IdleTimeout_BlockedByActiveConn(t *testing.T) {
 	conn := dialProxy(t, port)
 	defer conn.Close()
 
+	require.Eventually(t, func() bool {
+		return stats.Snapshot().HandledConns == 1
+	}, ioTimeout, 10*time.Millisecond, "client connection was not handled")
+
 	// Wait past two full idle windows to confirm activeConns gates the watcher.
 	time.Sleep(4 * time.Second)
 	assert.Equal(t, int64(0), stats.Snapshot().IdleTimeouts)
 
-	// Tear down cleanly.
+	// A long-lived connection must receive a full idle interval after close.
+	lastClose := time.Now()
 	require.NoError(t, conn.Close())
-	h.Cancel()
-	require.NoError(t, h.waitErr(t, shutdownWait))
+	require.NoError(t, h.waitErr(t, 6*time.Second))
+	assert.GreaterOrEqual(t, time.Since(lastClose), 2*time.Second, "last close must receive the full idle interval")
+	assert.Equal(t, int64(1), stats.Snapshot().IdleTimeouts)
+	assert.Equal(t, int64(1), stats.Snapshot().BackendStopCalls)
+	assert.Equal(t, int64(1), ts.Snapshot().StopCalls)
 
+	assertNoPidFile(t, root)
+}
+
+func TestProxy_IdleTimeout_BlockedByShortLivedConns(t *testing.T) {
+	t.Parallel()
+
+	ts := server.New()
+	ts.Handler = server.DiscardHandler
+	stats := &proxy.Stats{}
+	port := freeTCPPort(t)
+	root := t.TempDir()
+
+	h := runProxy(t, proxy.ProxyOpts{
+		RootDir: root, Port: port,
+		IdleTimeout: 2 * time.Second,
+		Server:      ts, Stats: stats,
+	})
+	waitListening(t, root, listenWait)
+
+	deadline := time.Now().Add(5 * time.Second)
+	var lastClose time.Time
+	for time.Now().Before(deadline) {
+		conn := dialProxy(t, port)
+		_, err := conn.Write([]byte("x"))
+		require.NoError(t, err)
+		lastClose = time.Now()
+		require.NoError(t, conn.Close())
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	assert.Equal(t, int64(0), stats.Snapshot().IdleTimeouts)
+	pf, err := pidfile.Read(root, proxy.PIDFileName)
+	require.NoError(t, err)
+	assert.NotNil(t, pf)
+
+	require.False(t, lastClose.IsZero(), "the regression must exercise client traffic")
+	require.NoError(t, h.waitErr(t, 6*time.Second))
+	assert.GreaterOrEqual(t, time.Since(lastClose), 2*time.Second, "last close must receive the full idle interval")
+	assert.Equal(t, int64(1), stats.Snapshot().IdleTimeouts)
 	assertNoPidFile(t, root)
 }
 

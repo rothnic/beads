@@ -65,6 +65,9 @@ type proxyServer struct {
 	listener    net.Listener
 	activeConns atomic.Int64
 	conns       errgroup.Group
+
+	activityMu   sync.Mutex
+	lastActivity time.Time
 }
 
 const (
@@ -381,11 +384,19 @@ func stopBackendBounded(s server.DatabaseServer) error {
 	return s.Stop(ctx)
 }
 
+func (p *proxyServer) recordActivity() {
+	p.activityMu.Lock()
+	// Keep the monotonic clock and timestamp order across concurrent clients.
+	p.lastActivity = time.Now()
+	p.activityMu.Unlock()
+}
+
 func (p *proxyServer) idleWatcher(ctx context.Context) error {
 	if p.idleTimeout <= 0 {
 		<-ctx.Done()
 		return nil
 	}
+	p.recordActivity()
 	interval := p.idleTimeout / 4
 	if interval < idleWatcherMinInterval {
 		interval = idleWatcherMinInterval
@@ -393,7 +404,7 @@ func (p *proxyServer) idleWatcher(ctx context.Context) error {
 	p.tracef("idleWatcher start (timeout=%s, tick=%s)", p.idleTimeout, interval)
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
-	var idleSince time.Time
+	armed := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -401,18 +412,20 @@ func (p *proxyServer) idleWatcher(ctx context.Context) error {
 			return nil
 		case <-tick.C:
 			if n := p.activeConns.Load(); n > 0 {
-				if !idleSince.IsZero() {
+				if armed {
 					p.tracef("idleWatcher cleared (active=%d)", n)
-					idleSince = time.Time{}
+					armed = false
 				}
 				continue
 			}
-			if idleSince.IsZero() {
+			if !armed {
 				p.tracef("idleWatcher armed")
-				idleSince = time.Now()
-				continue
+				armed = true
 			}
-			if time.Since(idleSince) >= p.idleTimeout {
+			p.activityMu.Lock()
+			idleFor := time.Since(p.lastActivity)
+			p.activityMu.Unlock()
+			if idleFor >= p.idleTimeout {
 				p.tracef("idleWatcher expired after %s, shutting down", p.idleTimeout)
 				p.stats.IncIdleTimeout()
 				return errIdleTimeout
@@ -438,6 +451,7 @@ func (p *proxyServer) acceptLoop(ctx context.Context) error {
 			p.stats.IncAcceptError()
 			return fmt.Errorf("accept: %w", err)
 		}
+		p.recordActivity()
 		if tc, ok := conn.(*net.TCPConn); ok {
 			_ = tc.SetKeepAlive(true)
 			_ = tc.SetKeepAlivePeriod(tcpKeepAlivePeriod)
@@ -455,6 +469,7 @@ func (p *proxyServer) handleConn(ctx context.Context, client net.Conn) error {
 	p.tracef("handleConn(%s) start", addr)
 	p.activeConns.Add(1)
 	defer func() {
+		p.recordActivity()
 		p.activeConns.Add(-1)
 		p.tracef("handleConn(%s) end (active=%d)", addr, p.activeConns.Load())
 	}()
