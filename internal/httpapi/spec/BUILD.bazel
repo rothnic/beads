@@ -20,6 +20,7 @@ exports_files(
     visibility = [
         "//internal/httpclient/encode:__pkg__",
         "//scripts/repochecks:__pkg__",
+        "//test/docsync:__pkg__",
     ],
 )
 

@@ -204,7 +204,7 @@ func TestEmbeddedBackupConcurrent(t *testing.T) {
 		}
 		if r.err == nil {
 			successes++
-		} else if !strings.Contains(r.out, "one writer at a time") {
+		} else if !strings.Contains(r.out, "one writer at a time") && !strings.Contains(r.out, errBackupBusy.Error()+"; retry when it completes") {
 			t.Errorf("worker %d failed with unexpected error: %v\n%s", r.worker, r.err, r.out)
 		}
 	}

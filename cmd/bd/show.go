@@ -42,6 +42,10 @@ var showCmd = &cobra.Command{
 			}
 		}()
 
+		if exactStore, _ := cmd.Flags().GetBool("exact-store"); exactStore {
+			return runShowExactStore(cmd, rootCtx, args)
+		}
+
 		if usesProxiedServer() {
 			return runShowProxiedServer(cmd, rootCtx, args)
 		}
@@ -317,6 +321,7 @@ var showCmd = &cobra.Command{
 }
 
 func init() {
+	showCmd.Flags().Bool("exact-store", false, "Read exact IDs only from the selected store (--json required; no ID or store routing)")
 	showCmd.Flags().Bool("thread", false, "Show full conversation thread (for messages)")
 	showCmd.Flags().Bool("short", false, "Show compact one-line output per issue")
 	showCmd.Flags().Bool("long", false, "Show all available fields (extended metadata, agent identity, gate fields, etc.)")

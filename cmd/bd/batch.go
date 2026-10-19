@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/httpapi"
 	"github.com/steveyegge/beads/internal/metrics"
 	"github.com/steveyegge/beads/internal/storage"
 	"github.com/steveyegge/beads/internal/storage/issueops"
@@ -22,14 +23,15 @@ import (
 // `bd batch` is intentionally a narrow, write-oriented command runner. It does
 // NOT re-use the top-level cobra handlers (close/update/create/dep) because
 // those handlers read the global `store` and perform a full connection-
-// per-operation workflow. Instead, batch parses a simple line-oriented grammar
-// and dispatches directly against a shared storage.Transaction so the entire
-// batch executes as a single dolt transaction (one DOLT_COMMIT).
+// per-operation workflow. The default line grammar dispatches directly against
+// a shared storage.Transaction so the batch executes as a single dolt
+// transaction (one DOLT_COMMIT). JSON input delegates its native wire request
+// to the owning provider's BatchApplier role.
 //
 // The supported grammar is a documented subset that matches what a downstream
 // consumer's shell-script "orders" (gate-sweep.sh, spawn-storm-detect.sh,
 // cross-rig-deps.sh) actually call in loops. See the Long help below for the
-// exact list. Unsupported commands error out loudly.
+// exact list. Unsupported line commands error out loudly.
 
 var batchCmd = &cobra.Command{
 	Use:     "batch",
@@ -46,7 +48,23 @@ a loop, which causes severe write amplification on a dolt sql-server backed
 by btrfs+compression. Batching collapses N invocations into one transaction
 and one dolt commit.
 
-Grammar (one command per line):
+Use --input-format=json for the schema-versioned public BatchApplier request.
+This input is bounded to 8 MiB and one JSON object. It supports pinned create
+identities, metadata patches and exact revision-string guards using the
+batchApply wire fields. The actor comes from the CLI; omit request.actor.
+Use request.provenance for the commit message. JSON input does not support
+--dry-run or --message. Metadata retains the native storage semantics.
+
+Example JSON input:
+  {"schema_version":"1","request":{"items":[{"kind":"create","create":
+    {"id":"bd-example","title":"Evidence","issue_type":"task",
+    "status":"closed","metadata":{"source":"retained"}}}]}}
+
+expected_version is the decimal revision string from 'bd show --json',
+not a complete content version or timestamp. A guard mismatch writes nothing
+and exits 13. Other failures exit 1. JSON output carries exact revision strings.
+
+Grammar (default --input-format=lines, one command per line):
   close <id> [reason...]
   update <id> <key>=<value> [<key>=<value> ...]
   create <type> <priority> <title...>
@@ -96,9 +114,15 @@ normal 'bd' subcommands for interactive/read operations.`,
 			}
 		}()
 
+		inputFormat, _ := cmd.Flags().GetString("input-format")
+		cmd.SilenceErrors = inputFormat == "json"
 		proxied := usesProxiedServer()
 		if !proxied && store == nil {
-			return fmt.Errorf("no database connection available (%s)", diagHint())
+			err := fmt.Errorf("no database connection available (%s)", diagHint())
+			if inputFormat == "json" {
+				return batchJSONError(err)
+			}
+			return err
 		}
 
 		filePath, _ := cmd.Flags().GetString("file")
@@ -109,7 +133,11 @@ normal 'bd' subcommands for interactive/read operations.`,
 		if filePath != "" {
 			f, err := os.Open(filePath) // #nosec G304 -- user-supplied batch file
 			if err != nil {
-				return fmt.Errorf("open batch file: %w", err)
+				err = fmt.Errorf("open batch file: %w", err)
+				if inputFormat == "json" {
+					return batchJSONError(err)
+				}
+				return err
 			}
 			defer f.Close()
 			reader = f
@@ -117,6 +145,40 @@ normal 'bd' subcommands for interactive/read operations.`,
 			reader = cmd.InOrStdin()
 		}
 
+		if inputFormat == "json" {
+			request, err := parseBatchJSON(reader, getActor())
+			if err != nil {
+				return batchJSONError(err)
+			}
+			if dryRun {
+				return batchJSONError(fmt.Errorf("JSON batch dry-run is not supported: %w", publicops.ErrValidation))
+			}
+			if commitMsg != "" {
+				return batchJSONError(fmt.Errorf("JSON batch provenance belongs in request.provenance: %w", publicops.ErrValidation))
+			}
+			ctx := rootCtx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			result, err := runBatchJSON(ctx, request, proxied)
+			if err != nil {
+				return batchJSONError(err)
+			}
+			for _, item := range result.Items {
+				if item.Changed {
+					commandDidWrite.Store(true)
+					break
+				}
+			}
+			if jsonOutput {
+				return outputJSON(httpapi.ApplyBatchResponse(result))
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "batch: %d JSON items committed\n", len(result.Items))
+			return nil
+		}
+		if inputFormat != "lines" {
+			return fmt.Errorf("invalid input format %q", inputFormat)
+		}
 		ops, err := parseBatchScript(reader)
 		if err != nil {
 			return fmt.Errorf("parsing batch input: %w", err)
@@ -216,6 +278,7 @@ normal 'bd' subcommands for interactive/read operations.`,
 }
 
 func init() {
+	batchCmd.Flags().String("input-format", "lines", "input format: lines or json (schema_version 1)")
 	batchCmd.Flags().StringP("file", "f", "", "Read commands from file instead of stdin")
 	batchCmd.Flags().Bool("dry-run", false, "Parse input and echo commands without executing")
 	batchCmd.Flags().StringP("message", "m", "", "DOLT_COMMIT message (default: 'bd: batch N ops by <actor>')")

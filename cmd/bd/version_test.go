@@ -77,6 +77,19 @@ func TestVersionCommand(t *testing.T) {
 		if result["build"] == "" {
 			t.Error("Expected build field to be non-empty")
 		}
+		capabilities, ok := result["capabilities"].([]interface{})
+		if !ok {
+			t.Fatalf("Expected capability list, got %T", result["capabilities"])
+		}
+		for _, required := range []string{"issues.batchApply.cli.json.v1", "issues.getExact.cli.json.v1"} {
+			found := false
+			for _, capability := range capabilities {
+				found = found || capability == required
+			}
+			if !found {
+				t.Errorf("CLI capability %q missing", required)
+			}
+		}
 		// cgo field removed — server-only operation, no CGO bifurcation
 		if _, ok := result["cgo"]; ok {
 			t.Error("cgo field should no longer be present in version output")

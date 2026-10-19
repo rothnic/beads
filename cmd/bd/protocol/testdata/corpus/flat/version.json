@@ -1,6 +1,10 @@
 {
   "branch": "<BRANCH>",
   "build": "<BUILD>",
+  "capabilities": [
+    "issues.batchApply.cli.json.v1",
+    "issues.getExact.cli.json.v1"
+  ],
   "schema_version": 1,
   "version": "<VERSION>"
 }

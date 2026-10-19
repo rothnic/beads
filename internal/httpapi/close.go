@@ -149,10 +149,22 @@ func (s *Server) closeRequest(w http.ResponseWriter, r *http.Request, id string)
 // because its body has exactly one member and it refuses the rest by name
 // before looking at any of them.
 func (s *Server) bodyActor(w http.ResponseWriter, r *http.Request, members map[string]json.RawMessage) (string, bool) {
+	actor, res := bodyActorFromMembers(members)
+	if res != nil {
+		s.fail(w, r, *res)
+		return "", false
+	}
+	return actor, true
+}
+
+func bodyActorFromMembers(members map[string]json.RawMessage) (string, *Result) {
+	refuse := func(detail string) (string, *Result) {
+		res := InvalidArgument(claimActorMember, ReasonInvalidValue, detail)
+		return "", &res
+	}
 	raw, ok := members[claimActorMember]
 	if !ok {
-		s.fail(w, r, InvalidArgument(claimActorMember, ReasonInvalidValue, "`"+claimActorMember+"` is required"))
-		return "", false
+		return refuse("`" + claimActorMember + "` is required")
 	}
 	// Through a POINTER so that `null` reaches the type-mismatch branch, for
 	// the reason claimActor gives: unmarshaling JSON null into a string is a
@@ -160,15 +172,13 @@ func (s *Server) bodyActor(w http.ResponseWriter, r *http.Request, members map[s
 	// status attached to prose that misdescribes what the client sent.
 	var actor *string
 	if err := json.Unmarshal(raw, &actor); err != nil || actor == nil {
-		s.fail(w, r, InvalidArgument(claimActorMember, ReasonInvalidValue, "`"+claimActorMember+"` must be a string"))
-		return "", false
+		return refuse("`" + claimActorMember + "` must be a string")
 	}
 	trimmed, res := validateActor(*actor)
 	if res != nil {
-		s.fail(w, r, *res)
-		return "", false
+		return "", res
 	}
-	return trimmed, true
+	return trimmed, nil
 }
 
 // storedTextMember reads an optional string member destined for a stored

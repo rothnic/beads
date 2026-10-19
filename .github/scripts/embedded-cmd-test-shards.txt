@@ -147,7 +147,9 @@
 100 61 TestEmbeddedUpdateRoutedStoreCommitsTargetHead
 
 100 62 TestEmbeddedReadyBlockersAndLabels
+100 62 TestEmbeddedShowExactStoreRejectsRoutedForeignID
 
+100 63 TestEmbeddedBatchJSONGuardedPublication
 100 63 TestEmbeddedDepAndLinkBatchAutoCommitDoesNotAdvanceHead
 
 100 64 TestEmbeddedGateWaiterCheckLifecycle

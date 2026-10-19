@@ -64,6 +64,7 @@
 34 5 TestProxiedServerUpdate3
 34 5 TestServerModeDeferAutoWake
 
+34 6 TestProxiedServerBatchJSONManagedGuardedPublication
 34 6 TestProxiedServerPing
 34 6 TestProxiedServerQuick
 34 6 TestProxiedServerServeReadsTheJournalItJustWrote
@@ -251,10 +252,12 @@
 34 30 TestProxiedServerDeleteConcurrent
 34 30 TestProxiedServerReadyC
 34 30 TestProxiedServerServeAddComment
+34 30 TestProxiedServerShowExactStoreParity
 34 30 TestProxiedServerStatus
 34 30 TestProxiedServerTodo
 34 30 TestProxiedServerUpdate2
 
+34 31 TestProxiedServerBatchJSONGuardedPublicationParity
 34 31 TestProxiedServerCloseBeadGate
 34 31 TestProxiedServerComment
 34 31 TestProxiedServerConfigB

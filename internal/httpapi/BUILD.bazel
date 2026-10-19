@@ -66,6 +66,7 @@ go_test(
     srcs = [
         "advance_molecule_test.go",
         "auth_test.go",
+        "batch_apply_codec_test.go",
         "batch_apply_test.go",
         "batch_close_test.go",
         "batch_create_test.go",

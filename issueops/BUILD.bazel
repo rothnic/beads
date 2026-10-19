@@ -75,6 +75,12 @@ go_test(
     ],
 )
 
+# Source contract the engineering guide links to and //test/docsync checks.
+exports_files(
+    ["metadatacas.go"],
+    visibility = ["//test/docsync:__pkg__"],
+)
+
 # --- begin go_srcs (managed by tools/bazel/go_srcs.py; run `make bazel-sync`) ---
 
 filegroup(
